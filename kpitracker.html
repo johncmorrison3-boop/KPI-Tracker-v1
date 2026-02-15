@@ -1,0 +1,1165 @@
+<!doctype html>
+<!--
+ASSUMPTIONS / DEFAULTS (kept short)
+- This dashboard supports TWO CSV shapes:
+  (A) Daily Log (horizontal): one row per day with KPI columns (recommended for your “inputs”).
+      Required: Date + the KPI columns you track (see KPI_COLUMNS below).
+  (B) Activity Log (vertical): event rows with Stage/Type/Industry/Revenue (Qty optional).
+      Required: Date, Stage, Type, Industry, Revenue.
+- Live Google Sheets loading works ONLY if the sheet is published to web as CSV or shared as "Anyone with the link can view"
+  AND the browser allows network requests from file:// origins.
+  If the URL load is blocked, use the Upload CSV button (always works locally).
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Recruiting KPI Dashboard (Local)</title>
+
+  <!-- CDN libraries ONLY -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0b0f14;
+      --panel:#0f172a;
+      --panel2:#111827;
+      --text:#e5e7eb;
+      --muted:#9ca3af;
+      --border:rgba(255,255,255,.10);
+      --shadow:0 14px 40px rgba(0,0,0,.35);
+      --radius:14px;
+      --good:#34d399;
+      --warn:#fbbf24;
+      --bad:#fb7185;
+      --accent:#60a5fa;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Helvetica Neue", Helvetica;
+      color:var(--text);
+      background: radial-gradient(1200px 900px at 30% 0%, #0b1630, var(--bg));
+    }
+    header{
+      position:sticky; top:0; z-index:50;
+      background: rgba(11,15,20,.78);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .wrap{max-width:1400px; margin:0 auto; padding:18px;}
+    header .wrap{padding:14px 18px;}
+    h1{margin:0; font-size:18px; letter-spacing:.2px}
+    .sub{margin:6px 0 0; color:var(--muted); font-size:13px; line-height:1.35}
+    .pill{
+      display:inline-block; padding:2px 10px; border-radius:999px;
+      border:1px solid var(--border);
+      color:var(--muted);
+      font-size:11px; font-weight:700;
+      vertical-align:middle;
+    }
+    .grid{display:grid; gap:14px; margin-top:14px;}
+    @media(min-width:980px){
+      .grid.three{grid-template-columns: 1fr 1fr 1fr;}
+    }
+    .panel{
+      background: linear-gradient(180deg, rgba(17,24,39,.92), rgba(15,23,42,.92));
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow: var(--shadow);
+      padding:14px;
+    }
+    .panel h2{
+      margin:0 0 10px;
+      font-size:14px; color:#dbeafe; letter-spacing:.3px;
+      display:flex; align-items:center; gap:8px;
+    }
+    .badge{
+      font-size:11px; padding:3px 8px; border-radius:999px;
+      border:1px solid var(--border); color:var(--muted); font-weight:700;
+    }
+    label{display:block; font-size:12px; color:var(--muted); margin-bottom:6px}
+    input[type="file"], input[type="date"], input[type="number"], input[type="text"], select, button{
+      width:100%;
+      border-radius:10px;
+      border:1px solid var(--border);
+      background: rgba(3,7,18,.55);
+      color:var(--text);
+      padding:10px 10px;
+      font-size:13px;
+      outline:none;
+    }
+    button{
+      cursor:pointer;
+      background: rgba(96,165,250,.16);
+      border-color: rgba(96,165,250,.35);
+      font-weight:900;
+      transition: transform .05s ease;
+      white-space:nowrap;
+    }
+    button:active{transform: translateY(1px);}
+    .btnRow{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+    .btnRow button{width:auto; padding:10px 12px;}
+    .controls{
+      display:grid; grid-template-columns: 1fr; gap:10px;
+    }
+    @media(min-width:900px){
+      .controls{grid-template-columns: 1.2fr 1fr 1fr 1fr; align-items:end;}
+    }
+    .hint{font-size:12px; color:var(--muted); margin-top:8px; line-height:1.35}
+    .status{margin-top:10px; font-size:12px; color:var(--muted); line-height:1.35}
+    .ok{color:var(--good)} .warn{color:var(--warn)} .err{color:var(--bad)}
+    .kpis{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px;}
+    @media(min-width:980px){.kpis{grid-template-columns: repeat(4, minmax(0,1fr));}}
+    .kpi{
+      padding:12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.18);
+    }
+    .kpi .name{margin:0 0 6px; font-size:12px; color:var(--muted)}
+    .kpi .value{margin:0; font-size:20px; font-weight:900}
+    .kpi .sub2{margin-top:6px; font-size:12px; color:#cbd5e1}
+    .flexline{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;}
+    .divider{height:1px; background: rgba(255,255,255,.08); margin:12px 0;}
+    canvas{width:100%!important; height:340px!important;}
+    .miniCanvas{height:160px!important;}
+    .targetsGrid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+      margin-top:10px;
+    }
+    @media(min-width:980px){.targetsGrid{grid-template-columns: repeat(4, minmax(0,1fr));}}
+    .targetCard{
+      padding:10px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.18);
+    }
+    .targetCard .top{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+    .targetCard .lbl{font-size:12px; color:#cbd5e1; font-weight:800}
+    .targetCard input{padding:8px 8px; font-weight:900; width:110px;}
+    .smallnote{font-size:12px; color:var(--muted); margin:8px 0 0; line-height:1.35}
+    .miniGrid{display:grid; grid-template-columns: 1fr; gap:12px;}
+    @media(min-width:980px){.miniGrid{grid-template-columns: 1fr 1fr;}}
+    .hidden{display:none!important}
+
+    .liveBox{
+      margin-top:10px;
+      padding:12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.14);
+    }
+    .liveGrid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+      align-items:end;
+    }
+    @media(min-width:900px){
+      .liveGrid{grid-template-columns: 1.6fr .7fr .7fr;}
+    }
+    .tiny{font-size:11px; color:var(--muted); margin-top:6px; line-height:1.35}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;}
+  </style>
+</head>
+
+<body>
+<header>
+  <div class="wrap">
+    <h1>Recruiting KPI Dashboard <span class="pill">local • single HTML • no server</span></h1>
+    <p class="sub">Upload a CSV or load live from Google Sheets, pick a date range, adjust targets, and see <strong>actuals vs target</strong>.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- Controls -->
+  <div class="panel">
+    <h2>Controls <span class="badge" id="modeBadge">waiting for CSV</span></h2>
+
+    <div class="controls">
+      <div>
+        <label for="csvFile">Upload CSV</label>
+        <input id="csvFile" type="file" accept=".csv,text/csv" />
+        <div class="hint">
+          Upload always works locally. Best format: one row per day with KPI columns.
+        </div>
+      </div>
+
+      <div>
+        <label for="startDate">Start Date</label>
+        <input id="startDate" type="date" />
+      </div>
+
+      <div>
+        <label for="endDate">End Date</label>
+        <input id="endDate" type="date" />
+      </div>
+
+      <div>
+        <label>&nbsp;</label>
+        <div class="btnRow">
+          <button id="thisMonthBtn" title="Set range to the current month (based on today)">This Month</button>
+          <button id="ytdBtn" title="Set range to Jan 1 through today">Year to Date</button>
+          <button id="applyBtn">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Google Sheet loader -->
+    <div class="liveBox">
+      <h2 style="margin:0 0 10px;">Live Google Sheet <span class="badge">optional</span></h2>
+      <div class="liveGrid">
+        <div>
+          <label for="sheetUrl">Google Sheets CSV URL</label>
+          <input id="sheetUrl" type="text" placeholder="Paste a published-to-web CSV URL here…" />
+          <div class="tiny">
+            Best method: Google Sheets → <strong>File → Share → Publish to web</strong> → choose <strong>CSV</strong>.
+            Then paste the URL here. <span class="mono">…/export?format=csv</span>
+          </div>
+        </div>
+
+        <div>
+          <label>&nbsp;</label>
+          <button id="loadUrlBtn" title="Load data from the URL">Load URL</button>
+        </div>
+
+        <div>
+          <label>&nbsp;</label>
+          <button id="refreshUrlBtn" title="Reload the last URL" disabled>Refresh</button>
+        </div>
+      </div>
+
+      <div class="tiny" id="liveMeta">
+        <span class="muted">Last live load:</span> <span class="mono">—</span>
+      </div>
+      <div class="tiny">
+        If URL loading fails in your browser from <span class="mono">file://</span>, just download CSV from Google Sheets and upload it (works every time).
+      </div>
+    </div>
+
+    <div class="status" id="statusBox">
+      <div><strong>Status:</strong> <span class="warn">Upload a CSV or load a URL to begin.</span></div>
+    </div>
+  </div>
+
+  <!-- Daily KPI Focus -->
+  <div class="panel" style="margin-top:14px;">
+    <div class="flexline">
+      <h2 style="margin:0;">Daily KPI Tracker <span class="badge">actuals vs target</span></h2>
+      <span class="pill">Targets update instantly</span>
+    </div>
+
+    <div class="miniGrid" style="margin-top:10px;">
+      <div>
+        <label for="kpiSelect">Select KPI</label>
+        <select id="kpiSelect"></select>
+        <div class="hint">Pick a KPI. The chart and summary update immediately.</div>
+      </div>
+      <div>
+        <label>View</label>
+        <div class="btnRow">
+          <button id="modeDailyBtn" title="Chart daily values">Daily</button>
+          <button id="modeCumBtn" title="Chart running total (on-pace line)">Cumulative</button>
+        </div>
+        <div class="hint">Cumulative = “am I on pace?”</div>
+      </div>
+    </div>
+
+    <div class="targetsGrid" id="targetsGrid"></div>
+
+    <div class="divider"></div>
+
+    <div class="kpis" id="kpiSummary"></div>
+    <p class="smallnote" id="rangeNote"></p>
+
+    <div style="margin-top:12px;">
+      <canvas id="mainChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Mini charts -->
+  <div class="panel" style="margin-top:14px;">
+    <div class="flexline">
+      <h2 style="margin:0;">All KPI Trends <span class="badge">small multiples</span></h2>
+      <span class="pill">Same range • targets respected</span>
+    </div>
+    <div class="grid three" id="miniChartsGrid" style="margin-top:12px;"></div>
+    <div class="hint">These are lightweight mini charts—use the main chart for detail.</div>
+  </div>
+
+  <!-- Optional pipeline section -->
+  <div class="panel hidden" id="pipelinePanel" style="margin-top:14px;">
+    <h2>Pipeline (Optional) <span class="badge">activity-log format</span></h2>
+    <div class="kpis" id="pipelineKpis"></div>
+    <div class="smallnote">This section appears only if your CSV includes <span class="pill">Stage</span>.</div>
+  </div>
+
+</div>
+
+<script>
+/* =========================
+   CONFIG: KPI columns + defaults
+   ========================= */
+
+const KPI_COLUMNS = [
+  { key:'marketing', label:'Marketing Calls', col:'Marketing Calls', defaultTarget:45 },
+  { key:'recruit',   label:'Recruit Calls',   col:'Recruit Calls',   defaultTarget:20 },
+  { key:'indeed',    label:'Indeed Messages', col:'Indeed Messages', defaultTarget:20 },
+  { key:'linkedin',  label:'LinkedIn Messages', col:'LinkedIn Messages', defaultTarget:20 },
+  { key:'innerview', label:'Innerviews',      col:'Innerviews',      defaultTarget:3 },
+  { key:'candint',   label:'Candidate Interviews (Client)', col:'Candidate Interviews (Client)', defaultTarget:2 },
+  { key:'joborder',  label:'Job Orders Obtained', col:'Job Orders Obtained', defaultTarget:1 },
+  { key:'present',   label:'Presentations',   col:'Presentations',   defaultTarget:2 }
+];
+
+// Activity Log (vertical) optional columns for detection
+const ACTIVITY_COLS = {
+  DATE:'Date',
+  STAGE:'Stage',
+  TYPE:'Type',
+  INDUSTRY:'Industry',
+  REVENUE:'Revenue',
+  QTY:'Qty' // optional
+};
+
+const STAGES = {
+  CONVO:'Conversation',
+  INTERVIEW:'Interview',
+  OFFER:'Offer',
+  OFFER_REJ:'Offer Rejected',
+  PLACEMENT:'Placement'
+};
+
+// localStorage keys
+const LS_TARGETS = 'rkpi_targets_v1';
+const LS_LAST_KPI = 'rkpi_last_kpi_v1';
+const LS_VIEW_MODE = 'rkpi_view_mode_v1'; // daily | cum
+const LS_SHEET_URL = 'rkpi_sheet_url_v1';
+const LS_SHEET_LAST = 'rkpi_sheet_lastload_v1';
+
+/* =========================
+   State
+   ========================= */
+let rawRows = [];
+let parsedMode = 'none'; // daily | activity | none
+let dailyRows = [];      // normalized daily: {dt,dateKey, values:{kpiKey:number}}
+let activityRows = [];   // normalized activity
+let dateRange = { start:null, end:null };
+let viewMode = 'daily'; // daily or cum
+let charts = { main:null, minis:new Map() };
+let lastLoadedUrl = null;
+
+/* =========================
+   DOM
+   ========================= */
+const elFile = document.getElementById('csvFile');
+const elStart = document.getElementById('startDate');
+const elEnd = document.getElementById('endDate');
+const elApply = document.getElementById('applyBtn');
+const elThisMonth = document.getElementById('thisMonthBtn');
+const elYtd = document.getElementById('ytdBtn');
+
+const elStatus = document.getElementById('statusBox');
+const elModeBadge = document.getElementById('modeBadge');
+const elTargetsGrid = document.getElementById('targetsGrid');
+const elKpiSelect = document.getElementById('kpiSelect');
+const elKpiSummary = document.getElementById('kpiSummary');
+const elRangeNote = document.getElementById('rangeNote');
+
+const elModeDailyBtn = document.getElementById('modeDailyBtn');
+const elModeCumBtn = document.getElementById('modeCumBtn');
+
+const elMiniChartsGrid = document.getElementById('miniChartsGrid');
+
+const elPipelinePanel = document.getElementById('pipelinePanel');
+const elPipelineKpis = document.getElementById('pipelineKpis');
+
+// Live URL controls
+const elSheetUrl = document.getElementById('sheetUrl');
+const elLoadUrlBtn = document.getElementById('loadUrlBtn');
+const elRefreshUrlBtn = document.getElementById('refreshUrlBtn');
+const elLiveMeta = document.getElementById('liveMeta');
+
+/* =========================
+   Helpers
+   ========================= */
+function safeTrim(v){ return (v ?? '').toString().trim(); }
+function isValidDate(d){ return d instanceof Date && !Number.isNaN(d.getTime()); }
+
+function setStatus(type, html){
+  const cls = type==='ok'?'ok':type==='warn'?'warn':type==='err'?'err':'';
+  elStatus.innerHTML = `<div><strong>Status:</strong> <span class="${cls}">${html}</span></div>`;
+}
+
+function parseFlexibleDate(value){
+  const s = safeTrim(value);
+  if (!s) return null;
+
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso){
+    const y=+iso[1], m=+iso[2], d=+iso[3];
+    const dt = new Date(y, m-1, d);
+    return isValidDate(dt) ? dt : null;
+  }
+  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (us){
+    const m=+us[1], d=+us[2], y=+us[3];
+    const dt = new Date(y, m-1, d);
+    return isValidDate(dt) ? dt : null;
+  }
+  const t = Date.parse(s);
+  if (!Number.isNaN(t)){
+    const dt = new Date(t);
+    return isValidDate(dt) ? dt : null;
+  }
+  return null;
+}
+
+function toISO(dt){
+  const y=dt.getFullYear();
+  const m=String(dt.getMonth()+1).padStart(2,'0');
+  const d=String(dt.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
+}
+
+function fmtInt(n){ return (Number(n)||0).toLocaleString(); }
+function fmtPct(x){
+  if (!Number.isFinite(x)) return '—';
+  return `${(x*100).toFixed(1)}%`;
+}
+function ratio(n,d){
+  n=Number(n)||0; d=Number(d)||0;
+  if (d<=0) return NaN;
+  return n/d;
+}
+
+function destroyChart(c){ if (c && typeof c.destroy==='function') c.destroy(); }
+
+function clampDateInputs(){
+  if (!elStart.value || !elEnd.value) return;
+  const s = parseFlexibleDate(elStart.value);
+  const e = parseFlexibleDate(elEnd.value);
+  if (s && e && e < s) elEnd.value = elStart.value;
+}
+
+function currentMonthRange(){
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth()+1, 0);
+  return { start, end };
+}
+
+function yearToDateRange(){
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 1); // Jan 1
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // today
+  return { start, end };
+}
+
+/* =========================
+   Targets persistence
+   ========================= */
+function loadTargets(){
+  try{
+    const raw = localStorage.getItem(LS_TARGETS);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return obj && typeof obj==='object' ? obj : null;
+  } catch { return null; }
+}
+function saveTargets(obj){
+  try{ localStorage.setItem(LS_TARGETS, JSON.stringify(obj)); } catch {}
+}
+function getTargetMap(){
+  const saved = loadTargets() || {};
+  const out = {};
+  for (const k of KPI_COLUMNS){
+    const v = Number(saved[k.key]);
+    out[k.key] = Number.isFinite(v) ? v : k.defaultTarget;
+  }
+  return out;
+}
+function setTarget(kpiKey, value){
+  const map = loadTargets() || {};
+  map[kpiKey] = value;
+  saveTargets(map);
+}
+
+/* =========================
+   Detect CSV shape + normalize
+   ========================= */
+function detectMode(sampleRow){
+  if (!sampleRow) return 'none';
+  const keys = Object.keys(sampleRow);
+  const hasStage = keys.includes(ACTIVITY_COLS.STAGE) && keys.includes(ACTIVITY_COLS.DATE);
+  if (hasStage) return 'activity';
+
+  const hasDate = keys.includes(ACTIVITY_COLS.DATE);
+  const hasAnyKpi = KPI_COLUMNS.some(k => keys.includes(k.col));
+  if (hasDate && hasAnyKpi) return 'daily';
+
+  return 'none';
+}
+
+function parseNumberCell(v){
+  const s = safeTrim(v);
+  if (!s) return 0;
+  const cleaned = s.replace(/[^0-9.\-]/g,'');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseMoney(v){
+  const s = safeTrim(v);
+  if (!s) return 0;
+  const cleaned = s.replace(/\$/g,'').replace(/,/g,'').replace(/\s/g,'');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseQty(v){
+  const s = safeTrim(v);
+  if (!s) return 1;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n<=0) return 1;
+  return Math.floor(n);
+}
+
+function normalizeDaily(rows){
+  const out = [];
+  let bad = 0;
+  for (const r of rows){
+    const anyVal = Object.values(r).some(v => safeTrim(v) !== '');
+    if (!anyVal) continue;
+
+    const dt = parseFlexibleDate(r[ACTIVITY_COLS.DATE]);
+    if (!dt){ bad++; continue; }
+
+    const values = {};
+    for (const k of KPI_COLUMNS){
+      values[k.key] = parseNumberCell(r[k.col]);
+    }
+    out.push({ dt, dateKey: toISO(dt), values });
+  }
+  out.sort((a,b)=>a.dt-b.dt);
+  return { out, bad };
+}
+
+function normalizeActivity(rows){
+  const out = [];
+  let bad = 0;
+  for (const r of rows){
+    const anyVal = Object.values(r).some(v => safeTrim(v) !== '');
+    if (!anyVal) continue;
+
+    const dt = parseFlexibleDate(r[ACTIVITY_COLS.DATE]);
+    if (!dt){ bad++; continue; }
+
+    out.push({
+      dt,
+      dateKey: toISO(dt),
+      stage: safeTrim(r[ACTIVITY_COLS.STAGE]),
+      type: safeTrim(r[ACTIVITY_COLS.TYPE]),
+      revenue: parseMoney(r[ACTIVITY_COLS.REVENUE]),
+      qty: (ACTIVITY_COLS.QTY in r) ? parseQty(r[ACTIVITY_COLS.QTY]) : 1
+    });
+  }
+  out.sort((a,b)=>a.dt-b.dt);
+  return { out, bad };
+}
+
+/* =========================
+   Date filtering + day list
+   ========================= */
+function getRangeFromInputs(){
+  const s = elStart.value ? parseFlexibleDate(elStart.value) : null;
+  const e = elEnd.value ? parseFlexibleDate(elEnd.value) : null;
+  return { start:s, end:e };
+}
+
+function withinRange(dt, start, end){
+  if (start && dt < start) return false;
+  if (end){
+    const endPlus = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23,59,59,999);
+    if (dt > endPlus) return false;
+  }
+  return true;
+}
+
+function buildDayKeysInRange(start, end){
+  if (!start || !end) return [];
+  const days = [];
+  const c = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const e = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  while (c <= e){
+    days.push(toISO(c));
+    c.setDate(c.getDate()+1);
+  }
+  return days;
+}
+
+/* =========================
+   Build KPI series (actual + target)
+   ========================= */
+function getDailyActualsMap(){
+  const map = new Map();
+  for (const row of dailyRows){
+    map.set(row.dateKey, row.values);
+  }
+  return map;
+}
+
+function seriesForKpi(kpiKey, dayKeys, targetPerDay, mode){
+  const actualMap = getDailyActualsMap();
+  const actual = [];
+  const target = [];
+
+  let runA = 0;
+  let runT = 0;
+
+  for (let i=0;i<dayKeys.length;i++){
+    const d = dayKeys[i];
+    const vals = actualMap.get(d);
+    const v = vals ? (Number(vals[kpiKey])||0) : 0;
+
+    if (mode === 'cum'){
+      runA += v;
+      runT += (Number(targetPerDay)||0);
+      actual.push(runA);
+      target.push(runT);
+    } else {
+      actual.push(v);
+      target.push(Number(targetPerDay)||0);
+    }
+  }
+  return { actual, target };
+}
+
+/* =========================
+   UI: KPI selector + targets
+   ========================= */
+function renderKpiSelect(){
+  elKpiSelect.innerHTML = '';
+  for (const k of KPI_COLUMNS){
+    const opt = document.createElement('option');
+    opt.value = k.key;
+    opt.textContent = k.label;
+    elKpiSelect.appendChild(opt);
+  }
+  const last = localStorage.getItem(LS_LAST_KPI);
+  elKpiSelect.value = KPI_COLUMNS.some(k=>k.key===last) ? last : KPI_COLUMNS[0].key;
+
+  elKpiSelect.onchange = ()=>{
+    localStorage.setItem(LS_LAST_KPI, elKpiSelect.value);
+    refresh();
+  };
+}
+
+function renderTargets(){
+  const targetMap = getTargetMap();
+  elTargetsGrid.innerHTML = '';
+
+  for (const k of KPI_COLUMNS){
+    const card = document.createElement('div');
+    card.className = 'targetCard';
+    card.innerHTML = `
+      <div class="top">
+        <div class="lbl">${k.label}</div>
+        <input id="t_${k.key}" type="number" min="0" step="1" value="${targetMap[k.key]}">
+      </div>
+      <div class="hint">Target per day</div>
+    `;
+    elTargetsGrid.appendChild(card);
+  }
+
+  for (const k of KPI_COLUMNS){
+    const input = document.getElementById(`t_${k.key}`);
+    input.addEventListener('input', ()=>{
+      const v = Number(input.value);
+      if (Number.isFinite(v)) setTarget(k.key, v);
+      refreshChartsOnly();
+      refreshSummaryOnly();
+    });
+  }
+}
+
+/* =========================
+   View mode (daily vs cumulative)
+   ========================= */
+function loadViewMode(){
+  const saved = localStorage.getItem(LS_VIEW_MODE);
+  return (saved === 'cum' || saved === 'daily') ? saved : 'daily';
+}
+function setViewMode(m){
+  viewMode = m;
+  localStorage.setItem(LS_VIEW_MODE, m);
+  refresh();
+}
+function renderViewModeButtons(){
+  const isDaily = viewMode === 'daily';
+  elModeDailyBtn.style.background = isDaily ? 'rgba(52,211,153,.16)' : 'rgba(96,165,250,.16)';
+  elModeDailyBtn.style.borderColor = isDaily ? 'rgba(52,211,153,.35)' : 'rgba(96,165,250,.35)';
+
+  elModeCumBtn.style.background = !isDaily ? 'rgba(52,211,153,.16)' : 'rgba(96,165,250,.16)';
+  elModeCumBtn.style.borderColor = !isDaily ? 'rgba(52,211,153,.35)' : 'rgba(96,165,250,.35)';
+}
+
+/* =========================
+   Summary cards for selected KPI
+   ========================= */
+function renderSummary(dayKeys){
+  const kpiKey = elKpiSelect.value;
+  const kpi = KPI_COLUMNS.find(x=>x.key===kpiKey);
+  const targets = getTargetMap();
+  const t = Number(targets[kpiKey])||0;
+
+  const actualMap = getDailyActualsMap();
+
+  let total = 0;
+  for (const d of dayKeys){
+    const vals = actualMap.get(d);
+    const v = vals ? (Number(vals[kpiKey])||0) : 0;
+    total += v;
+  }
+  const dayCount = dayKeys.length || 0;
+  const avgPerDay = dayCount ? (total / dayCount) : 0;
+
+  const totalTarget = (Number.isFinite(t) ? t : 0) * dayCount;
+  const pctToTarget = ratio(total, totalTarget);
+  const onPace = ratio(avgPerDay, t);
+
+  elKpiSummary.innerHTML = '';
+  const cards = [
+    { name:`${kpi.label} • Total`, value: fmtInt(total), sub: `Across ${fmtInt(dayCount)} day(s)` },
+    { name:`${kpi.label} • Avg / Day`, value: fmtInt(avgPerDay.toFixed(1)), sub: `Target/day: ${fmtInt(t)}` },
+    { name:`% to Target (range)`, value: fmtPct(pctToTarget), sub: `Target total: ${fmtInt(totalTarget)}` },
+    { name:`Pace vs Target/day`, value: fmtPct(onPace), sub: `Avg/day ÷ target/day` }
+  ];
+
+  for (const c of cards){
+    const div = document.createElement('div');
+    div.className = 'kpi';
+    div.innerHTML = `<p class="name">${c.name}</p><p class="value">${c.value}</p><div class="sub2">${c.sub}</div>`;
+    elKpiSummary.appendChild(div);
+  }
+}
+
+/* =========================
+   Charts
+   ========================= */
+function renderMainChart(dayKeys){
+  const kpiKey = elKpiSelect.value;
+  const kpi = KPI_COLUMNS.find(x=>x.key===kpiKey);
+  const targets = getTargetMap();
+  const t = Number(targets[kpiKey])||0;
+
+  const { actual, target } = seriesForKpi(kpiKey, dayKeys, t, viewMode);
+
+  const ctx = document.getElementById('mainChart').getContext('2d');
+  destroyChart(charts.main);
+
+  const titleSuffix = (viewMode === 'cum') ? ' (Cumulative)' : ' (Daily)';
+
+  charts.main = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels: dayKeys,
+      datasets:[
+        { label: `${kpi.label}${titleSuffix} • Actual`, data: actual, tension:0.25, borderWidth:2, pointRadius:2.5 },
+        { label: `${kpi.label}${titleSuffix} • Target`, data: target, tension:0, borderWidth:2, borderDash:[6,6], pointRadius:0 }
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{ position:'top', labels:{ color:'#cbd5e1' } },
+        tooltip:{ callbacks:{ label:(c)=> `${c.dataset.label}: ${fmtInt(c.raw)}` } }
+      },
+      scales:{
+        x:{ ticks:{ color:'#cbd5e1', maxRotation:0, autoSkip:true }, grid:{ color:'rgba(255,255,255,0.06)' } },
+        y:{ beginAtZero:true, ticks:{ color:'#cbd5e1' }, grid:{ color:'rgba(255,255,255,0.06)' } }
+      }
+    }
+  });
+}
+
+function ensureMiniCanvas(kpiKey){
+  const id = `mini_${kpiKey}`;
+  let canvas = document.getElementById(id);
+  if (canvas) return canvas;
+
+  const card = document.createElement('div');
+  card.className = 'kpi';
+  card.style.padding = '12px';
+  card.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <div style="font-weight:900; font-size:12px; color:#cbd5e1;">${KPI_COLUMNS.find(k=>k.key===kpiKey).label}</div>
+      <button style="padding:6px 8px; font-size:11px;" data-focus="${kpiKey}">Focus</button>
+    </div>
+    <div style="margin-top:10px;">
+      <canvas class="miniCanvas" id="${id}"></canvas>
+    </div>
+  `;
+  elMiniChartsGrid.appendChild(card);
+
+  const btn = card.querySelector('button[data-focus]');
+  btn.addEventListener('click', ()=>{
+    elKpiSelect.value = kpiKey;
+    localStorage.setItem(LS_LAST_KPI, kpiKey);
+    refresh();
+    window.scrollTo({ top: 0, behavior:'smooth' });
+  });
+
+  return document.getElementById(id);
+}
+
+function renderMiniCharts(dayKeys){
+  const targets = getTargetMap();
+
+  for (const k of KPI_COLUMNS){
+    const canvas = ensureMiniCanvas(k.key);
+    const ctx = canvas.getContext('2d');
+
+    const { actual, target } = seriesForKpi(k.key, dayKeys, Number(targets[k.key])||0, viewMode);
+
+    const existing = charts.minis.get(k.key);
+    if (existing) destroyChart(existing);
+
+    const ch = new Chart(ctx, {
+      type:'line',
+      data:{
+        labels: dayKeys,
+        datasets:[
+          { label:'Actual', data: actual, tension:0.25, borderWidth:2, pointRadius:0 },
+          { label:'Target', data: target, tension:0, borderWidth:2, borderDash:[6,6], pointRadius:0 }
+        ]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        plugins:{ legend:{ display:false }, tooltip:{ enabled:false } },
+        scales:{ x:{ display:false }, y:{ display:false, beginAtZero:true } }
+      }
+    });
+
+    charts.minis.set(k.key, ch);
+  }
+}
+
+/* =========================
+   Optional: pipeline summary (Activity Log format)
+   ========================= */
+function computePipelineKpis(rows){
+  let conv=0, interviews=0, offers=0, offerRej=0, placements=0, revenue=0;
+  for (const r of rows){
+    const q = r.qty||1;
+    if (r.stage === STAGES.CONVO) conv += q;
+    else if (r.stage === STAGES.INTERVIEW) interviews += q;
+    else if (r.stage === STAGES.OFFER) offers += q;
+    else if (r.stage === STAGES.OFFER_REJ) offerRej += q;
+    else if (r.stage === STAGES.PLACEMENT) placements += q;
+    if (r.stage === STAGES.PLACEMENT) revenue += (r.revenue||0) * q;
+  }
+  return { conv, interviews, offers, offerRej, placements, revenue };
+}
+function renderPipeline(rowsInRange){
+  const k = computePipelineKpis(rowsInRange);
+  const items = [
+    { name:'Conversations', value: fmtInt(k.conv) },
+    { name:'Interviews', value: fmtInt(k.interviews) },
+    { name:'Offers', value: fmtInt(k.offers) },
+    { name:'Offer Rej', value: fmtInt(k.offerRej) },
+    { name:'Placements', value: fmtInt(k.placements) },
+    { name:'Revenue', value: (k.revenue||0).toLocaleString(undefined,{style:'currency',currency:'USD',maximumFractionDigits:0}) }
+  ];
+  elPipelineKpis.innerHTML = '';
+  for (const it of items){
+    const div = document.createElement('div');
+    div.className='kpi';
+    div.innerHTML = `<p class="name">${it.name}</p><p class="value">${it.value}</p>`;
+    elPipelineKpis.appendChild(div);
+  }
+}
+
+/* =========================
+   Core: accept parsed rows and refresh
+   ========================= */
+function applyParsedRows(rows){
+  rawRows = rows || [];
+  if (!rawRows.length){
+    parsedMode = 'none';
+    setStatus('err','No rows found.');
+    return;
+  }
+
+  parsedMode = detectMode(rawRows[0]);
+  viewMode = loadViewMode();
+  renderViewModeButtons();
+
+  if (parsedMode === 'daily'){
+    const { out, bad } = normalizeDaily(rawRows);
+    dailyRows = out;
+    activityRows = [];
+    elModeBadge.textContent = 'Daily Log detected';
+    if (!dailyRows.length){
+      setStatus('err', `No valid daily rows after parsing. Bad dates: ${fmtInt(bad)}.`);
+      return;
+    }
+    elStart.value = toISO(dailyRows[0].dt);
+    elEnd.value = toISO(dailyRows[dailyRows.length-1].dt);
+    setStatus('ok', `Loaded Daily Log. Days: ${fmtInt(dailyRows.length)} (bad dates skipped: ${fmtInt(bad)}).`);
+  }
+  else if (parsedMode === 'activity'){
+    const { out, bad } = normalizeActivity(rawRows);
+    activityRows = out;
+    dailyRows = [];
+    elModeBadge.textContent = 'Activity Log detected';
+    if (!activityRows.length){
+      setStatus('err', `No valid activity rows after parsing. Bad dates: ${fmtInt(bad)}.`);
+      return;
+    }
+
+    // Optional derivation: if Stage names match KPI labels, we can still chart KPI trends.
+    const stageToKey = new Map(KPI_COLUMNS.map(k=>[k.label, k.key]));
+    const dayAgg = new Map(); // dateKey -> values
+    for (const r of activityRows){
+      const key = stageToKey.get(r.stage);
+      if (!key) continue;
+      if (!dayAgg.has(r.dateKey)){
+        const obj = {};
+        for (const k of KPI_COLUMNS) obj[k.key] = 0;
+        dayAgg.set(r.dateKey, obj);
+      }
+      dayAgg.get(r.dateKey)[key] += (r.qty||1);
+    }
+
+    elStart.value = toISO(activityRows[0].dt);
+    elEnd.value = toISO(activityRows[activityRows.length-1].dt);
+
+    dailyRows = Array.from(dayAgg.entries())
+      .map(([dateKey, values])=>({ dt: parseFlexibleDate(dateKey), dateKey, values }))
+      .filter(x=>x.dt)
+      .sort((a,b)=>a.dt-b.dt);
+
+    setStatus('ok', `Loaded Activity Log. Rows: ${fmtInt(activityRows.length)} (bad dates skipped: ${fmtInt(bad)}).`);
+  }
+  else {
+    setStatus('err',
+      `Could not detect CSV shape. Your CSV must be either:
+      (1) Daily Log: Date + KPI columns, OR (2) Activity Log: Date + Stage + Type + Industry + Revenue.`
+    );
+    return;
+  }
+
+  renderKpiSelect();
+  renderTargets();
+  refresh();
+}
+
+/* =========================
+   Refresh orchestration
+   ========================= */
+function refresh(){
+  if (parsedMode === 'none'){
+    setStatus('warn', 'Upload a CSV or load a URL to begin.');
+    return;
+  }
+
+  dateRange = getRangeFromInputs();
+  if (!dateRange.start || !dateRange.end){
+    const all = (parsedMode==='daily') ? dailyRows : activityRows;
+    if (all.length){
+      elStart.value = toISO(all[0].dt);
+      elEnd.value = toISO(all[all.length-1].dt);
+      dateRange = getRangeFromInputs();
+    }
+  }
+
+  const days = buildDayKeysInRange(dateRange.start, dateRange.end);
+
+  renderViewModeButtons();
+  renderSummary(days);
+  renderMainChart(days);
+  renderMiniCharts(days);
+
+  if (parsedMode === 'activity'){
+    const inRange = activityRows.filter(r=>withinRange(r.dt, dateRange.start, dateRange.end));
+    elPipelinePanel.classList.remove('hidden');
+    renderPipeline(inRange);
+  } else {
+    elPipelinePanel.classList.add('hidden');
+  }
+
+  elRangeNote.textContent = `Range: ${dateRange.start ? toISO(dateRange.start) : '—'} → ${dateRange.end ? toISO(dateRange.end) : '—'} • Days: ${fmtInt(days.length)}`;
+}
+
+function refreshChartsOnly(){
+  if (parsedMode === 'none') return;
+  const r = getRangeFromInputs();
+  if (!r.start || !r.end) return;
+  const days = buildDayKeysInRange(r.start, r.end);
+  renderMainChart(days);
+  renderMiniCharts(days);
+}
+
+function refreshSummaryOnly(){
+  if (parsedMode === 'none') return;
+  const r = getRangeFromInputs();
+  if (!r.start || !r.end) return;
+  const days = buildDayKeysInRange(r.start, r.end);
+  renderSummary(days);
+}
+
+/* =========================
+   LIVE SHEET: load from URL
+   ========================= */
+function setLiveMeta(text){
+  elLiveMeta.innerHTML = `<span class="muted">Last live load:</span> <span class="mono">${text || '—'}</span>`;
+}
+
+function persistSheetUrl(url){
+  try{ localStorage.setItem(LS_SHEET_URL, url); } catch {}
+}
+function loadPersistedSheetUrl(){
+  try{ return localStorage.getItem(LS_SHEET_URL) || ''; } catch { return ''; }
+}
+function persistLastLoadStamp(stamp){
+  try{ localStorage.setItem(LS_SHEET_LAST, stamp); } catch {}
+}
+function loadLastLoadStamp(){
+  try{ return localStorage.getItem(LS_SHEET_LAST) || ''; } catch { return ''; }
+}
+
+function loadFromUrl(url){
+  url = safeTrim(url);
+  if (!url){
+    setStatus('warn', 'Paste a Google Sheets CSV URL first.');
+    return;
+  }
+
+  setStatus('warn', 'Loading CSV from URL…');
+
+  // PapaParse "download:true" is the best bet from a local file page.
+  Papa.parse(url, {
+    download: true,
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: false,
+    complete: (res) => {
+      const rows = res.data || [];
+      if (!rows.length){
+        setStatus('err', 'URL loaded, but no rows were found. Make sure the link is a CSV export, not an HTML share link.');
+        return;
+      }
+      lastLoadedUrl = url;
+      elRefreshUrlBtn.disabled = false;
+      persistSheetUrl(url);
+
+      const stamp = new Date().toLocaleString();
+      persistLastLoadStamp(stamp);
+      setLiveMeta(`${stamp}`);
+
+      applyParsedRows(rows);
+      setStatus('ok', `Live URL loaded. Rows: ${fmtInt(rows.length)}.`);
+    },
+    error: (err) => {
+      // This often happens due to browser restrictions from file:// origins
+      console.error(err);
+      setStatus('err', `URL load failed. This is usually a browser security/CORS restriction from file://. Quick fix: download CSV from Google Sheets and upload it. Error: ${safeTrim(err?.message || err)}`);
+    }
+  });
+}
+
+/* =========================
+   Wire controls
+   ========================= */
+elApply.addEventListener('click', ()=>{ clampDateInputs(); refresh(); });
+elStart.addEventListener('change', ()=>{ clampDateInputs(); refresh(); });
+elEnd.addEventListener('change', ()=>{ clampDateInputs(); refresh(); });
+
+elThisMonth.addEventListener('click', ()=>{
+  const { start, end } = currentMonthRange();
+  elStart.value = toISO(start);
+  elEnd.value = toISO(end);
+  refresh();
+});
+
+elYtd.addEventListener('click', ()=>{
+  const { start, end } = yearToDateRange();
+  elStart.value = toISO(start);
+  elEnd.value = toISO(end);
+  refresh();
+});
+
+elModeDailyBtn.addEventListener('click', ()=> setViewMode('daily'));
+elModeCumBtn.addEventListener('click', ()=> setViewMode('cum'));
+
+// Upload CSV
+elFile.addEventListener('change', ()=>{
+  const file = elFile.files && elFile.files[0];
+  if (!file) return;
+
+  setStatus('warn', 'Parsing uploaded CSV…');
+
+  Papa.parse(file, {
+    header:true,
+    skipEmptyLines:true,
+    dynamicTyping:false,
+    complete:(res)=>{
+      try{
+        const rows = res.data || [];
+        if (!rows.length){
+          setStatus('err','CSV appears empty.');
+          return;
+        }
+        applyParsedRows(rows);
+      } catch (e){
+        console.error(e);
+        setStatus('err', `Error parsing CSV: ${safeTrim(e.message)}`);
+      }
+    }
+  });
+});
+
+// Live URL load buttons
+elLoadUrlBtn.addEventListener('click', ()=>{
+  loadFromUrl(elSheetUrl.value);
+});
+elRefreshUrlBtn.addEventListener('click', ()=>{
+  if (!lastLoadedUrl){
+    const persisted = loadPersistedSheetUrl();
+    if (persisted) lastLoadedUrl = persisted;
+  }
+  if (!lastLoadedUrl){
+    setStatus('warn', 'No URL to refresh yet. Paste a URL and click Load URL.');
+    return;
+  }
+  loadFromUrl(lastLoadedUrl);
+});
+
+/* =========================
+   Init
+   ========================= */
+viewMode = loadViewMode();
+renderViewModeButtons();
+renderKpiSelect();
+renderTargets();
+
+// Initialize live URL field from localStorage
+const persistedUrl = loadPersistedSheetUrl();
+if (persistedUrl){
+  elSheetUrl.value = persistedUrl;
+  lastLoadedUrl = persistedUrl;
+  elRefreshUrlBtn.disabled = false;
+}
+const lastStamp = loadLastLoadStamp();
+if (lastStamp) setLiveMeta(lastStamp);
+</script>
+</body>
+</html>
