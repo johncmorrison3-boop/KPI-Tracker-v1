@@ -1048,36 +1048,46 @@ function loadFromUrl(url){
 
   setStatus('warn', 'Loading CSV from URL…');
 
-  // PapaParse "download:true" is the best bet from a local file page.
-  Papa.parse(url, {
-    download: true,
-    header: true,
-    skipEmptyLines: true,
-    dynamicTyping: false,
-    complete: (res) => {
-      const rows = res.data || [];
-      if (!rows.length){
-        setStatus('err', 'URL loaded, but no rows were found. Make sure the link is a CSV export, not an HTML share link.');
-        return;
-      }
-      lastLoadedUrl = url;
-      elRefreshUrlBtn.disabled = false;
-      persistSheetUrl(url);
+// Cache-buster to force fresh fetch
+const sep = url.includes('?') ? '&' : '?';
+const freshUrl = url + sep + 'cb=' + Date.now();
 
-      const stamp = new Date().toLocaleString();
-      persistLastLoadStamp(stamp);
-      setLiveMeta(`${stamp}`);
+setStatus('warn', 'Loading CSV from URL…');
 
-      applyParsedRows(rows);
-      setStatus('ok', `Live URL loaded. Rows: ${fmtInt(rows.length)}.`);
-    },
-    error: (err) => {
-      // This often happens due to browser restrictions from file:// origins
-      console.error(err);
-      setStatus('err', `URL load failed. This is usually a browser security/CORS restriction from file://. Quick fix: download CSV from Google Sheets and upload it. Error: ${safeTrim(err?.message || err)}`);
+fetch(freshUrl, { cache: 'no-store' })
+  .then(r => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.text();
+  })
+  .then(csvText => {
+    const res = Papa.parse(csvText, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: false
+    });
+
+    const rows = res.data || [];
+    if (!rows.length){
+      setStatus('err', 'URL loaded, but no rows were found.');
+      return;
     }
+
+    lastLoadedUrl = url;
+    elRefreshUrlBtn.disabled = false;
+    persistSheetUrl(url);
+
+    const stamp = new Date().toLocaleString();
+    persistLastLoadStamp(stamp);
+    setLiveMeta(`${stamp}`);
+
+    applyParsedRows(rows);
+    setStatus('ok', `Live URL loaded. Rows: ${fmtInt(rows.length)}.`);
+  })
+  .catch(err => {
+    console.error(err);
+    setStatus('err', `URL load failed: ${safeTrim(err?.message || err)}`);
   });
-}
+
 
 /* =========================
    Wire controls
