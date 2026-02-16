@@ -1042,9 +1042,6 @@ function loadFromUrl(url){
     setStatus('warn', 'Paste a Google Sheets CSV URL first.');
     return;
   }
-   // Cache-buster to force fresh fetch
-  const sep = url.includes('?') ? '&' : '?';
-  url = url + sep + 'cb=' + Date.now();
 
   setStatus('warn', 'Loading CSV from URL…');
 
